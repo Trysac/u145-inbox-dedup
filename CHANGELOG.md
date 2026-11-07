@@ -9,4 +9,5 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Implement SqliteInbox and InMemoryInbox with atomic deduplication, retention purge, and size enforcement.
 - Initial project structure from the factory utility template.

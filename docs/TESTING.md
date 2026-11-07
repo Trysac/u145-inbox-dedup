@@ -3,18 +3,17 @@
 ## Running
 
 ```sh
-uv run pytest --cov=inbox_dedup   # tests with coverage report
-uv run python scripts/check.py      # every gate, as CI and the factory run it
+uv run pytest --cov=inbox_dedup
+uv run python scripts/check.py
 ```
 
-## Policy
+## Coverage
 
-- Branch coverage of `src/inbox_dedup` must stay at or above 80 %; the gate fails below it.
-- Tests exercise the public API (`import inbox_dedup`) and assert every observable effect:
-  return values, raised exceptions and their messages.
-- Each bug fix starts with a failing test that reproduces it.
-- Tests are deterministic: no network, no wall clock, no dependence on test order.
+The test suite exercises the public API to ensure compliance with the following:
 
-## Layout
-
-`tests/test_<module>.py` mirrors each public module. Shared fixtures go in `tests/conftest.py`.
+- `tests/test_inbox_dedup.py`: Covers the full lifecycle of `SqliteInbox` and `InMemoryInbox` handlers.
+- Exercises processing logic: verifies that the handler is called exactly once for new messages and zero times for duplicates.
+- Exercises failure modes: verifies that database transactions and in-memory marks roll back correctly when handlers raise exceptions (including `KeyboardInterrupt` and `ValueError`).
+- Exercises validation logic: verifies strict enforcement of message ID lengths, character sets, table naming conventions, and JSON serialization size limits.
+- Exercises concurrency: verifies that two threads contending for the same message ID correctly serialize access.
+- Exercises retention: verifies that `purge` correctly removes data based on the provided clock and time delta.

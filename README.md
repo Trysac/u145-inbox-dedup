@@ -1,48 +1,52 @@
-# inbox-dedup
+# trysac-inbox-dedup
 
-[![PyPI version](https://img.shields.io/pypi/v/trysac-inbox-dedup)](https://pypi.org/project/trysac-inbox-dedup/)
-[![License: MIT](https://img.shields.io/pypi/l/trysac-inbox-dedup)](LICENSE)
-[![CI](https://github.com/Trysac/u145-inbox-dedup/actions/workflows/ci.yml/badge.svg)](https://github.com/Trysac/u145-inbox-dedup/actions/workflows/ci.yml)
+Transactional inbox pattern for idempotent message consumers in Python. This utility records incoming message IDs atomically within the worker's own SQLite transaction, ensuring redelivered messages are identified as duplicates without separate external store coordination.
 
-Inbox pattern for idempotent message consumers: record message ids in the handler's transaction so redelivered messages are skipped, in SQLite or memory
+## The Problem
 
-## Problem
+Message brokers typically guarantee at-least-once delivery. When workers crash, disconnect, or rebalance, redelivered messages can trigger duplicate external effects (e.g., charging a card twice). Using an external store like Redis `SETNX` creates a race window: the worker might fail after updating Redis but before committing the database, or the database might roll back while Redis persists the mark.
 
-Describe in two or three sentences the concrete problem this utility solves, who hits it, and what
-they do today without it. Replace this paragraph when the first real feature lands.
+`trysac-inbox-dedup` links the deduplication record directly to the database transaction of the work itself.
 
-## Install
+## Installation
 
-```sh
+```bash
 pip install trysac-inbox-dedup
-# or
-uv add trysac-inbox-dedup
 ```
 
-Requires Python 3.10 or newer. No runtime dependencies.
-
-## Usage
+## Usage Example
 
 ```python
-import inbox_dedup
+import sqlite3
+from inbox_dedup import SqliteInbox
 
-# normalize() trims surrounding whitespace and lower-cases the text.
-print(inbox_dedup.normalize("  Hello World "))  # -> "hello world"
+conn = sqlite3.connect(":memory:", timeout=5)
+inbox = SqliteInbox(conn)
 
-# Blank input is rejected explicitly instead of returning an empty string.
-try:
-    inbox_dedup.normalize("   ")
-except ValueError as exc:
-    print(f"rejected: {exc}")
+
+def handler(tx_conn):
+    return {"status": "confirmed"}
+
+
+outcome = inbox.handle("order-1", handler)
+print(outcome.status)  # processed
 ```
 
-## Documentation
+## Public API Summary
 
-- [Architecture](docs/ARCHITECTURE.md) and [decisions](docs/decisions/)
-- [Testing](docs/TESTING.md) and [security](docs/SECURITY.md)
-- [Project record](docs/PROJECT.md) and [stack](docs/STACK.md)
-- [Changelog](CHANGELOG.md) and [contributing guide](CONTRIBUTING.md)
+- `SqliteInbox(conn, *, table="inbox", clock=utc_now, on_event=None)`: Creates a transactional inbox table if missing.
+- `InMemoryInbox(*, max_entries=100000, clock=utc_now, on_event=None)`: Thread-safe in-memory deduplication with LRU eviction.
+- `handle(message_id, handler)`: Processes the handler or returns a cached `Outcome` if duplicate.
+- `purge(older_than)`: Removes stale records.
+- `stats()`: Returns entries count and eviction count.
 
-## License
+**Limits & Options**:
+- Results are limited to 65,536 bytes of JSON-serialized data.
+- Handlers must not manually commit the `sqlite3.Connection`.
+- `InboxError` provides machine-readable codes: `invalid_message_id`, `invalid_table`, `invalid_result`, `result_too_large`, `in_transaction`.
 
-[MIT](LICENSE) (c) 2026 Miguel Gomez
+## Why not Redis SETNX?
+
+Because external caches like Redis operate outside the database transaction, they cannot guarantee atomicity between the message deduplication mark and the business logic commit. If the database transaction rolls back, the Redis mark remains, effectively dropping valid messages forever. `trysac-inbox-dedup` ensures the mark and the work are committed or rolled back together.
+
+See [docs/SECURITY.md](docs/SECURITY.md) for threat modeling.
