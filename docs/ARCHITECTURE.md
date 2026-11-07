@@ -1,29 +1,28 @@
 # Architecture
 
-## Purpose
+`trysac-inbox-dedup` implements the Inbox pattern for message consumers.
 
-`trysac-inbox-dedup` is a small, dependency-free Python library: Inbox pattern for idempotent message consumers: record message ids in the handler's transaction so redelivered messages are skipped, in SQLite or memory
+## Transactional Flow (SQLite)
 
-## Shape
+1. Verification that the connection is not currently in a transaction (`conn.in_transaction is False`).
+2. Acquire process thread lock and execute `BEGIN IMMEDIATE` on SQLite, obtaining an immediate reserved write lock.
+3. Query `SELECT result FROM <table> WHERE message_id = ?`.
+4. If an entry exists:
+   - Commit transaction (`COMMIT`).
+   - Emit `duplicate` event to `on_event` hook (without result payload).
+   - Parse stored JSON and return `Outcome(status='duplicate', result=...)`.
+5. If no entry exists:
+   - Invoke `handler(conn)` passing the transactional connection.
+   - Serialize handler result to JSON using deterministic formatting (`sort_keys=True, allow_nan=False`).
+   - Verify payload size (`<= 65_536` bytes).
+   - Insert message record with ISO-8601 UTC timestamp.
+   - Commit transaction (`COMMIT`).
+   - Emit `processed` event to `on_event` hook.
+   - Return `Outcome(status='processed', result=...)`.
+6. On any exception (including `BaseException`):
+   - Execute `ROLLBACK`.
+   - Re-raise original exception without swallow.
 
-```text
-caller code --> inbox_dedup (public API in __init__.py)
-                    |
-                    +-- pure functions, no I/O, no global state
-```
+## In-Memory Flow
 
-- **Public API**: the names listed in `__all__` of `src/inbox_dedup/__init__.py`. Anything else is
-  internal and may change without a major version.
-- **Errors**: invalid input raises built-in exceptions (`ValueError`, `TypeError`) with a clear
-  message; the library never prints or exits.
-- **Side effects**: none. If a feature needs I/O, isolate it in its own module behind a small
-  interface and record the choice in an ADR.
-
-## Quality contract
-
-`scripts/check.py` is the single definition of the gates; `fabrica.json` tells the factory and CI
-how to run it. See [TESTING.md](TESTING.md).
-
-## Decisions
-
-Architecture decisions are recorded in [decisions/](decisions/) as numbered ADRs.
+`InMemoryInbox` maintains an `OrderedDict` protected by a mutex lock. When `max_entries` is exceeded, the oldest entry by insertion order is evicted, updating `stats().evicted`.
