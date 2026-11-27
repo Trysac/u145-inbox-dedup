@@ -10,8 +10,10 @@ Message brokers typically guarantee at-least-once delivery. When workers crash, 
 
 ## Installation
 
+Not published to PyPI yet. Install it from GitHub:
+
 ```bash
-pip install trysac-inbox-dedup
+pip install "git+https://github.com/Trysac/u145-inbox-dedup"
 ```
 
 ## Usage Example
